@@ -25,12 +25,11 @@ func init() {
 }
 
 type Task struct {
-	ID       int64  `json:"id"`
-	Date     string `json:"date"`
-	Title    string `json:"title"`
-	Comment  string `json:"comment"`
-	Repeat   string `json:"repeat"`
-	NextDate string `json:"-"`
+	ID      string `json:"id,omitempty"`
+	Date    string `json:"date"`
+	Title   string `json:"title"`
+	Comment string `json:"comment"`
+	Repeat  string `json:"repeat"`
 }
 
 type Response struct {
@@ -103,11 +102,11 @@ func setupRouter() *chi.Mux {
 	// API маршруты
 	router.Get("/api/nextdate", nextDateHandler)
 	router.Route("/api/task", func(r chi.Router) {
-		r.Post("/", withDB(createTaskHandler))       // POST для создания задачи
-		r.Get("/", withDB(getTaskHandler))           // GET для получения задачи (с query-параметром id)
-		r.Get("/{id}", withDB(getTaskHandler))       // GET для получения задачи (с параметром в URL)
-		r.Delete("/{id}", withDB(deleteTaskHandler)) // DELETE для удаления задачи
-		r.Put("/{id}", withDB(updateTaskHandler))    // PUT для обновления задачи
+		r.Post("/", withDB(createTaskHandler))   // POST для создания задачи
+		r.Get("/", withDB(getTaskHandler))       // GET для получения задачи (с query-параметром id)
+		r.Get("/{id}", withDB(getTaskHandler))   // GET для получения задачи (с параметром в URL)
+		r.Delete("/", withDB(deleteTaskHandler)) // DELETE для удаления задачи
+		r.Put("/", withDB(updateTaskHandler))    // PUT для обновления задачи
 	})
 	router.Get("/api/tasks", withDB(getTasksHandler))          // GET для получения списка задач
 	router.Post("/api/task/done", withDB(markTaskDoneHandler)) // POST для отметки задачи как выполненной
@@ -273,11 +272,11 @@ func getTaskHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Логируем полученные данные
-	log.Printf("Получена задача: ID=%d, Date=%s, Title=%s, Comment=%s, Repeat=%s\n", task.ID, task.Date, task.Title, task.Comment, task.Repeat)
+	log.Printf("Получена задача: ID=%s, Date=%s, Title=%s, Comment=%s, Repeat=%s\n", task.ID, task.Date, task.Title, task.Comment, task.Repeat)
 
 	// Возвращаем задачу в формате JSON
 	writeJSON(w, http.StatusOK, map[string]string{
-		"id":      strconv.FormatInt(task.ID, 10),
+		"id":      strconv.FormatInt(id, 10),
 		"date":    task.Date,
 		"title":   task.Title,
 		"comment": task.Comment,
@@ -309,13 +308,7 @@ func updateTaskHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Декодирование JSON
-	var input struct {
-		ID      int64  `json:"id"`
-		Date    string `json:"date"`
-		Title   string `json:"title"`
-		Comment string `json:"comment"`
-		Repeat  string `json:"repeat"`
-	}
+	input := Task{}
 
 	if err := json.Unmarshal(body, &input); err != nil {
 		log.Printf("Ошибка декодирования JSON: %v\n", err)
@@ -323,10 +316,11 @@ func updateTaskHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Декодированные данные: ID=%d, Date=%s, Title=%s, Comment=%s, Repeat=%s\n", input.ID, input.Date, input.Title, input.Comment, input.Repeat)
+	log.Printf("Декодированные данные: ID=%s, Date=%s, Title=%s, Comment=%s, Repeat=%s\n", input.ID, input.Date, input.Title, input.Comment, input.Repeat)
 
 	// Валидация ID задачи
-	if input.ID == 0 {
+	id, err := strconv.Atoi(input.ID)
+	if err != nil || id == 0 {
 		log.Println("Ошибка: ID задачи не указан")
 		writeError(w, http.StatusBadRequest, "ID задачи не указан")
 		return
@@ -378,7 +372,7 @@ func updateTaskHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 	// Обновление задачи в базе данных
 	query := `UPDATE scheduler SET date = ?, title = ?, comment = ?, repeat = ? WHERE id = ?`
-	log.Printf("Выполнение SQL-запроса: %s с параметрами: Date=%s, Title=%s, Comment=%s, Repeat=%s, ID=%d\n", query, input.Date, input.Title, input.Comment, input.Repeat, input.ID)
+	log.Printf("Выполнение SQL-запроса: %s с параметрами: Date=%s, Title=%s, Comment=%s, Repeat=%s, ID=%s\n", query, input.Date, input.Title, input.Comment, input.Repeat, input.ID)
 
 	result, err := db.Exec(query, input.Date, input.Title, input.Comment, input.Repeat, input.ID)
 	if err != nil {
@@ -415,78 +409,118 @@ func updateTaskHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
 
 // удаление задачи
 func deleteTaskHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
-	taskID := chi.URLParam(r, "id")
+	// Логируем начало выполнения функции
+	log.Println("--- Функция deleteTaskHandler вызвана ---")
+
+	// Получаем идентификатор задачи из query-параметра
+	taskID := r.URL.Query().Get("id")
+	log.Printf("Полученный ID задачи: %s", taskID)
+
+	// Проверка наличия ID задачи
+	if taskID == "" {
+		log.Println("Ошибка: Идентификатор задачи не указан")
+		writeError(w, http.StatusBadRequest, "Идентификатор задачи не указан")
+		return
+	}
 
 	// Валидация ID задачи
-	if _, err := strconv.Atoi(taskID); err != nil {
-		writeError(w, http.StatusBadRequest, "ID задачи должен быть числом")
+	id, err := strconv.Atoi(taskID)
+	if err != nil || id <= 0 {
+		log.Printf("Ошибка: ID задачи должен быть положительным числом. Получено: %s", taskID)
+		writeError(w, http.StatusBadRequest, "ID задачи должен быть положительным числом")
 		return
 	}
 
+	// Логируем ID задачи перед удалением
+	log.Printf("Попытка удаления задачи с ID: %d", id)
+
+	// Удаляем задачу из базы данных
 	query := `DELETE FROM scheduler WHERE id = ?`
-	_, err := db.Exec(query, taskID)
+	result, err := db.Exec(query, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Не удалось удалить задачу")
+		log.Printf("Ошибка при удалении задачи: %v", err)
+		writeError(w, http.StatusInternalServerError, "Ошибка при удалении задачи")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+	// Проверяем, была ли удалена хотя бы одна строка
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		log.Printf("Ошибка при проверке удаления задачи: %v", err)
+		writeError(w, http.StatusInternalServerError, "Ошибка при проверке удаления задачи")
+		return
+	}
+	if rowsAffected == 0 {
+		log.Printf("Ошибка: Задача с ID %d не найдена", id)
+		writeError(w, http.StatusNotFound, "Задача не найдена")
+		return
+	}
+
+	// Логируем успешное удаление задачи
+	log.Printf("Задача с ID %d успешно удалена", id)
+
+	// Возвращаем пустой JSON в случае успеха
+	writeJSON(w, http.StatusOK, map[string]interface{}{})
 }
 
 // пометить задачу как выполненную
 func markTaskDoneHandler(db *sql.DB, w http.ResponseWriter, r *http.Request) {
-	// Получение идентификатора задачи из параметров запроса
+	// Получаем идентификатор задачи из query-параметра
 	id := r.URL.Query().Get("id")
 	if id == "" {
-		http.Error(w, `{"error":"Идентификатор задачи не указан"}`, http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, "Идентификатор задачи не указан")
 		return
 	}
 
 	// Валидация ID задачи
-	if _, err := strconv.Atoi(id); err != nil {
-		writeError(w, http.StatusBadRequest, "ID задачи должен быть числом")
+	taskID, err := strconv.Atoi(id)
+	if err != nil || taskID <= 0 {
+		writeError(w, http.StatusBadRequest, "ID задачи должен быть положительным числом")
 		return
 	}
 
-	// Получение задачи из базы данных
+	// Получаем задачу из базы данных
 	var task Task
-	err := db.QueryRow("SELECT * FROM scheduler WHERE id = ?", id).Scan(&task)
+	query := `SELECT id, date, title, comment, repeat FROM scheduler WHERE id = ?`
+	err = db.QueryRow(query, taskID).Scan(&task.ID, &task.Date, &task.Title, &task.Comment, &task.Repeat)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"Задача с id %s не найдена"}`, id), http.StatusNotFound)
+		if err == sql.ErrNoRows {
+			writeError(w, http.StatusNotFound, "Задача не найдена")
+		} else {
+			writeError(w, http.StatusInternalServerError, "Ошибка при получении задачи")
+		}
 		return
 	}
 
+	// Если задача одноразовая (поле repeat пустое), удаляем её
 	if task.Repeat == "" {
-		// Если это одноразовая задача (поле repeat пустое), удаляем её
-		_, err := db.Exec("DELETE FROM scheduler WHERE id = ?", id)
+		_, err := db.Exec("DELETE FROM scheduler WHERE id = ?", taskID)
 		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"Ошибка удаления задачи: %v"}`, err), http.StatusInternalServerError)
+			writeError(w, http.StatusInternalServerError, "Ошибка при удалении задачи")
 			return
 		}
 
 		// Возвращаем пустой JSON в случае успеха
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{}`))
+		writeJSON(w, http.StatusOK, map[string]interface{}{})
 		return
 	}
 
 	// Для периодической задачи рассчитываем следующую дату
-	nextDate, err := nextDate(time.Now(), task.Date, task.Repeat)
+	nextDateStr, err := nextDate(time.Now(), task.Date, task.Repeat)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"Ошибка расчёта следующей даты: %v"}`, err), http.StatusBadRequest)
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("Ошибка при расчёте следующей даты: %v", err))
 		return
 	}
 
 	// Обновляем дату задачи в базе данных
-	_, err = db.Exec("UPDATE scheduler SET date = ? WHERE id = ?", nextDate, id)
+	_, err = db.Exec("UPDATE scheduler SET date = ? WHERE id = ?", nextDateStr, taskID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"Ошибка обновления задачи: %v"}`, err), http.StatusInternalServerError)
+		writeError(w, http.StatusInternalServerError, "Ошибка при обновлении задачи")
 		return
 	}
 
 	// Возвращаем пустой JSON в случае успеха
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{}`))
+	writeJSON(w, http.StatusOK, map[string]interface{}{})
 }
 
 // получение всех задач
